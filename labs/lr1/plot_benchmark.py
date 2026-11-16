@@ -11,7 +11,8 @@ width, height = 900, 560
 left, right, top, bottom = 100, 35, 55, 85
 plot_w, plot_h = width-left-right, height-top-bottom
 xs = [int(row["elements"]) for row in rows]
-ys = [float(row[key]) for row in rows for key in ("insert_ms", "find_ms", "erase_ms")]
+keys = ("insert_ms", "find_ms", "array_find_ms", "erase_ms")
+ys = [float(row[key]) for row in rows for key in keys]
 x0, x1 = math.log10(min(xs)), math.log10(max(xs))
 y0, y1 = math.log10(min(ys)), math.log10(max(ys))
 if x0 == x1: x1 += 1
@@ -19,8 +20,8 @@ if y0 == y1: y1 += 1
 def px(x): return left + (math.log10(x)-x0)/(x1-x0)*plot_w
 def py(y): return top + plot_h - (math.log10(y)-y0)/(y1-y0)*plot_h
 
-colors = {"insert_ms": "#2563eb", "find_ms": "#16a34a", "erase_ms": "#dc2626"}
-labels = {"insert_ms": "Вставка", "find_ms": "Поиск", "erase_ms": "Удаление"}
+colors = {"insert_ms": "#2563eb", "find_ms": "#16a34a", "array_find_ms": "#9333ea", "erase_ms": "#dc2626"}
+labels = {"insert_ms": "Вставка AVL", "find_ms": "Поиск AVL", "array_find_ms": "Поиск в массиве", "erase_ms": "Удаление AVL"}
 svg = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">',
        '<rect width="100%" height="100%" fill="white"/>',
        '<text x="450" y="30" text-anchor="middle" font-family="sans-serif" font-size="20">AVL-дерево: время базовых операций</text>']
@@ -41,7 +42,7 @@ for key, color in colors.items():
 svg.extend([f'<text x="{left+plot_w/2:.1f}" y="{height-28}" text-anchor="middle" font-family="sans-serif" font-size="14">Количество элементов (логарифмическая шкала)</text>',
             f'<text x="22" y="{top+plot_h/2:.1f}" text-anchor="middle" transform="rotate(-90 22 {top+plot_h/2:.1f})" font-family="sans-serif" font-size="14">Время, мс (логарифмическая шкала)</text>'])
 for i, (key, color) in enumerate(colors.items()):
-    x = left + i*130
+    x = left + i*155
     svg.extend([f'<line x1="{x}" y1="{height-55}" x2="{x+25}" y2="{height-55}" stroke="{color}" stroke-width="3"/>',
                 f'<text x="{x+32}" y="{height-51}" font-family="sans-serif" font-size="13">{labels[key]}</text>'])
 svg.append('</svg>')

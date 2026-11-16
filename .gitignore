@@ -4,3 +4,5 @@
 **/benchmark.csv
 **/benchmark.png
 **/benchmark.svg
+!labs/lr1/benchmark.csv
+!labs/lr1/benchmark.svg

@@ -1,4 +1,5 @@
 #include "avl_set.hpp"
+#include "value_examples.hpp"
 
 #include <cmath>
 #include <complex>
@@ -15,29 +16,6 @@ void verify(bool condition, const std::string& label) {
     ++checks;
     if (!condition) throw std::runtime_error(label);
 }
-
-struct Student {
-    int id;
-    std::string name;
-};
-
-struct StudentOrder {
-    bool operator()(const Student& left, const Student& right) const { return left.id < right.id; }
-};
-
-struct Teacher {
-    int personnelNumber;
-    std::string department;
-};
-
-struct TeacherOrder {
-    bool operator()(const Teacher& left, const Teacher& right) const {
-        return left.personnelNumber < right.personnelNumber;
-    }
-};
-
-int ascending(int value) { return value + 1; }
-int descending(int value) { return value - 1; }
 
 void rotationsAndUpdates() {
     {
@@ -81,6 +59,9 @@ void indexedAndFunctional() {
     AvlSet<int> tree;
     for (int value : {8, 3, 12, 1, 5, 10, 14, 4, 6}) tree.add(value);
     verify(tree.get(0) == 1 && tree.get(4) == 6 && tree.get(8) == 14, "rank access");
+    const ICollection<int>& collection = tree;
+    verify(collection.GetCount() == tree.size() && collection.Contains(10) && collection.Get(0) == 1,
+           "collection interface");
     bool rangeError = false;
     try { (void)tree.get(tree.size()); } catch (const IndexOutOfRange&) { rangeError = true; }
     verify(rangeError, "rank range error");
@@ -89,6 +70,24 @@ void indexedAndFunctional() {
     auto filtered = tree.where([](int value) { return value % 2 == 0; });
     verify(filtered.size() == 6 && filtered.has(14) && !filtered.has(5), "where selection");
     verify(tree.reduce(0, [](int value, int sum) { return value + sum; }) == 63, "reduce order and result");
+    const IEnumerable<int>& enumerable = tree;
+    auto iterator = enumerable.GetEnumerator();
+    bool currentRejected = false;
+    try { (void)iterator->GetCurrent(); } catch (const InvalidState&) { currentRejected = true; }
+    verify(currentRejected, "enumerator rejects current before first step");
+    std::size_t enumerated = 0;
+    while (iterator->MoveNext()) {
+        verify(iterator->GetCurrent() == tree.get(enumerated), "enumerator inorder sequence");
+        ++enumerated;
+    }
+    verify(enumerated == tree.size(), "enumerator covers collection");
+    iterator->Reset();
+    verify(iterator->MoveNext() && iterator->GetCurrent() == tree.get(0), "enumerator reset");
+    tree.add(16);
+    bool mutationRejected = false;
+    try { (void)iterator->GetCurrent(); } catch (const InvalidState&) { mutationRejected = true; }
+    verify(mutationRejected, "enumerator detects tree mutation");
+    tree.remove(16);
     auto merged = tree + filtered;
     verify(merged == tree && !(merged != tree), "set union operators");
     auto copy = tree;
@@ -127,6 +126,12 @@ void walksAndText() {
     bool badText = false;
     try { (void)AvlSet<int>::from_text("{8}(x)[ ]"); } catch (const InvalidArgument&) { badText = true; }
     verify(badText, "malformed text rejection");
+    bool extraEmptySectionsRejected = false;
+    try { (void)AvlSet<int>::from_text("{}()[]"); } catch (const InvalidArgument&) { extraEmptySectionsRejected = true; }
+    verify(extraEmptySectionsRejected, "extra empty sections rejected");
+    bool invalidDelimitersRejected = false;
+    try { (void)tree.to_text("!К?@Л#%П^"); } catch (const InvalidArgument&) { invalidDelimitersRejected = true; }
+    verify(invalidDelimitersRejected, "unknown delimiters rejected");
     AvlSet<std::string> words;
     words.add("hello tree"); words.add("braces } and spaces");
     verify(AvlSet<std::string>::from_text(words.to_text()) == words, "quoted string values");
@@ -147,25 +152,19 @@ void subtreeAndGenericValues() {
     AvlSet<double> decimals;
     decimals.add(2.25); decimals.add(-1.5);
     verify(decimals.has(2.25) && decimals.get(0) == -1.5, "real values");
-    struct ComplexOrder {
-        bool operator()(const std::complex<double>& a, const std::complex<double>& b) const {
-            return a.real() < b.real() || (a.real() == b.real() && a.imag() < b.imag());
-        }
-    };
     AvlSet<std::complex<double>, ComplexOrder> complex;
     complex.add({1.0, 2.0}); complex.add({-1.0, 0.5});
     verify(complex.size() == 2 && complex.get(0).real() == -1.0, "complex values by explicit order");
-    AvlSet<Student, StudentOrder> students;
+    AvlSet<StudentRecord, StudentOrder> students;
     students.add({12, "Ada"}); students.add({5, "Lin"});
-    verify(students.has({12, "different name"}) && students.get(0).id == 5, "student records by identifier");
-    AvlSet<Teacher, TeacherOrder> teachers;
+    verify(students.has({12, "different name"}) && students.get(0).studentNumber == 5, "student records by identifier");
+    AvlSet<TeacherRecord, TeacherOrder> teachers;
     teachers.add({901, "math"}); teachers.add({104, "physics"});
     verify(teachers.has({901, "other department"}) && teachers.get(0).personnelNumber == 104,
            "teacher records by personnel number");
-    using Function = int(*)(int);
-    AvlSet<Function> functions;
-    functions.add(&ascending); functions.add(&descending);
-    verify(functions.size() == 2 && functions.has(&ascending), "function pointer values");
+    AvlSet<IntegerFunction> functions;
+    functions.add(&addOne); functions.add(&doubleValue);
+    verify(functions.size() == 2 && functions.has(&addOne), "function pointer values");
 }
 
 void randomizedReference() {
@@ -217,6 +216,15 @@ void allocationAccounting() {
         verify(copy.empty(), "copy releases nodes on clear");
     }
     verify(AvlSet<int>{}.live_nodes() == initial, "all owned nodes released");
+    std::unique_ptr<IEnumerator<int>> expired;
+    {
+        AvlSet<int> temporary;
+        temporary.add(1);
+        expired = temporary.GetEnumerator();
+    }
+    bool destroyedTreeRejected = false;
+    try { (void)expired->MoveNext(); } catch (const InvalidState&) { destroyedTreeRejected = true; }
+    verify(destroyedTreeRejected, "enumerator detects destroyed tree");
 }
 }
 

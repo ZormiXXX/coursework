@@ -17,13 +17,13 @@ $(BUILD):
 $(APP): src/main.cpp src/tree_console.cpp src/benchmark.cpp $(HEADERS) | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) src/main.cpp src/tree_console.cpp src/benchmark.cpp -o $@
 $(TESTS): tests/test_tree.cpp $(HEADERS) | $(BUILD)
-	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< -o $@
+	$(CXX) $(CPPFLAGS) -DAVLSET_TRACK_NODES $(CXXFLAGS) $< -o $@
 run: $(APP)
 	./$(APP)
 test: $(TESTS)
 	./$(TESTS)
 test-sanitize: | $(BUILD)
-	$(CXX) $(CPPFLAGS) -std=c++20 -O1 -g -Wall -Wextra -Wpedantic -fsanitize=address,undefined -fno-omit-frame-pointer tests/test_tree.cpp -o $(BUILD)/tree_tests_san
+	$(CXX) $(CPPFLAGS) -DAVLSET_TRACK_NODES -std=c++20 -O1 -g -Wall -Wextra -Wpedantic -fsanitize=address,undefined -fno-omit-frame-pointer tests/test_tree.cpp -o $(BUILD)/tree_tests_san
 	./$(BUILD)/tree_tests_san
 benchmark: $(APP)
 	./$(APP) --benchmark $(or $(MAX_SIZE),10000000) $(or $(SEED),20261116)

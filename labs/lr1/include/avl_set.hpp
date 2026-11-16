@@ -15,19 +15,49 @@
 #include <utility>
 
 #include "Exceptions.hpp"
+#include "ICollection.hpp"
+#include "IEnumerable.hpp"
+
+template<class T, class Compare>
+class AvlSet;
+
+template<class T, class Compare>
+class TreeEnumerator;
 
 template<class T, class Compare = std::less<T>>
-class AvlSet {
+class AvlSet : public ICollection<T>, public IEnumerable<T> {
+    template<class, class>
+    friend class TreeEnumerator;
+
+    struct Revision {
+        std::size_t value = 0;
+        bool alive = true;
+    };
+
     struct Branch {
-        explicit Branch(const T& item) : value(item) { ++alive; }
-        explicit Branch(T&& item) : value(std::move(item)) { ++alive; }
-        ~Branch() { --alive; }
+        explicit Branch(const T& item) : value(item) {
+#ifdef AVLSET_TRACK_NODES
+            ++alive;
+#endif
+        }
+        explicit Branch(T&& item) : value(std::move(item)) {
+#ifdef AVLSET_TRACK_NODES
+            ++alive;
+#endif
+        }
+        ~Branch() {
+#ifdef AVLSET_TRACK_NODES
+            --alive;
+#endif
+        }
         T value;
         std::unique_ptr<Branch> left;
         std::unique_ptr<Branch> right;
         int level = 1;
         std::size_t count = 1;
+#ifdef AVLSET_TRACK_NODES
         static inline std::size_t alive = 0;
+#endif
     };
 
     struct Section {
@@ -43,6 +73,11 @@ class AvlSet {
     std::unique_ptr<Branch> top_;
     std::size_t count_ = 0;
     Compare compare_{};
+    mutable std::shared_ptr<Revision> revision_ = std::make_shared<Revision>();
+
+    void ensureRevision() const {
+        if (!revision_) revision_ = std::make_shared<Revision>();
+    }
 
     static int level(const std::unique_ptr<Branch>& branch) noexcept {
         return branch ? branch->level : 0;
@@ -176,12 +211,12 @@ class AvlSet {
             && sameBranch(left->right, right->right, compare);
     }
 
-    bool containsShape(const std::unique_ptr<Branch>& here, const std::unique_ptr<Branch>& pattern) const {
-        if (!pattern) return true;
+    bool containsMatchingRoot(const std::unique_ptr<Branch>& here,
+                              const std::unique_ptr<Branch>& pattern) const {
         if (!here) return false;
-        const bool sameValue = !compare_(here->value, pattern->value) && !compare_(pattern->value, here->value);
-        if (sameValue && sameBranch(here, pattern, compare_)) return true;
-        return containsShape(here->left, pattern) || containsShape(here->right, pattern);
+        if (compare_(pattern->value, here->value)) return containsMatchingRoot(here->left, pattern);
+        if (compare_(here->value, pattern->value)) return containsMatchingRoot(here->right, pattern);
+        return sameBranch(here, pattern, compare_);
     }
 
     static void writeValue(std::ostream& output, const T& value) {
@@ -226,10 +261,7 @@ class AvlSet {
             }
             expect(input, section.close);
         }
-        if (!value) {
-            if (left || right) throw InvalidArgument("tree format omits the root value");
-            return {};
-        }
+        if (!value) throw InvalidArgument("tree text is missing the root value");
         auto branch = std::make_unique<Branch>(std::move(*value));
         branch->left = std::move(left);
         branch->right = std::move(right);
@@ -241,11 +273,6 @@ class AvlSet {
         if (std::abs(level(branch->left) - level(branch->right)) > 1)
             throw InvalidArgument("tree text describes an unbalanced tree");
         return branch;
-    }
-
-    static const Section& findSection(const Format& format, char mark) {
-        for (const auto& section : format.sequence) if (section.mark == mark) return section;
-        throw InvalidArgument("tree format is missing a section");
     }
 
     static char peek(std::istream& input) {
@@ -282,6 +309,16 @@ class AvlSet {
             && validate(branch->right, compare, branch->value, upper);
     }
 
+    static void writeDiagram(std::ostream& output, const Branch& branch,
+                             const std::string& prefix, bool last, bool root = false) {
+        if (!root) output << prefix << (last ? "└── " : "├── ");
+        writeValue(output, branch.value);
+        output << '\n';
+        const std::string childPrefix = root ? std::string{} : prefix + (last ? "    " : "│   ");
+        if (branch.right) writeDiagram(output, *branch.right, childPrefix, false);
+        if (branch.left) writeDiagram(output, *branch.left, childPrefix, true);
+    }
+
     static Format parseFormat(const std::string& text) {
         Format result{{{'\0', 0, 0}, {'\0', 0, 0}, {'\0', 0, 0}}};
         std::size_t found = 0;
@@ -296,7 +333,10 @@ class AvlSet {
             char mark = marker == "К" || marker == "K" ? 'K'
                 : marker == "Л" || marker == "L" ? 'L'
                 : marker == "П" || marker == "R" ? 'R' : '\0';
-            if ((mark != 'K' && mark != 'L' && mark != 'R') || open == close)
+            const bool delimitersMatch = (open == '{' && close == '}')
+                || (open == '(' && close == ')') || (open == '[' && close == ']')
+                || (open == '<' && close == '>');
+            if ((mark != 'K' && mark != 'L' && mark != 'R') || !delimitersMatch)
                 throw InvalidArgument("tree format uses К, Л, П sections");
             for (std::size_t j = 0; j < found; ++j)
                 if (result.sequence[j].mark == mark) throw InvalidArgument("tree format repeats a section");
@@ -313,40 +353,62 @@ public:
     AvlSet() = default;
     explicit AvlSet(Compare compare) : compare_(std::move(compare)) {}
     AvlSet(const AvlSet& other) : top_(duplicate(other.top_)), count_(other.count_), compare_(other.compare_) {}
-    AvlSet(AvlSet&&) noexcept = default;
+    AvlSet(AvlSet&& other) noexcept(std::is_nothrow_move_constructible_v<Compare>)
+        : top_(std::move(other.top_)), count_(std::exchange(other.count_, 0)),
+          compare_(std::move(other.compare_)), revision_(std::move(other.revision_)) {
+        if (revision_) ++revision_->value;
+    }
+
+    ~AvlSet() { if (revision_) revision_->alive = false; }
+
     AvlSet& operator=(AvlSet other) noexcept(noexcept(std::declval<AvlSet&>().swap(other))) {
         swap(other);
         return *this;
     }
 
     void swap(AvlSet& other) noexcept(noexcept(std::swap(compare_, other.compare_))) {
+        if (revision_) ++revision_->value;
+        if (other.revision_) ++other.revision_->value;
         top_.swap(other.top_);
         std::swap(count_, other.count_);
         std::swap(compare_, other.compare_);
+        revision_.swap(other.revision_);
     }
 
     bool add(const T& value) {
+        ensureRevision();
         const bool inserted = addAt(top_, value);
         count_ += inserted;
+        if (inserted) ++revision_->value;
         return inserted;
     }
 
     bool remove(const T& value) {
         const bool erased = removeAt(top_, value);
         count_ -= erased;
+        if (erased) ++revision_->value;
         return erased;
     }
 
     bool has(const T& value) const { return locate(top_, value); }
+    bool Contains(const T& value) const override { return has(value); }
     bool empty() const noexcept { return !top_; }
     std::size_t size() const noexcept { return count_; }
+    std::size_t GetCount() const noexcept override { return count_; }
     int height() const noexcept { return level(top_); }
     const T& get(std::size_t index) const {
         if (index >= count_) throw IndexOutOfRange(static_cast<int>(index), static_cast<int>(count_));
         return indexed(*top_, index);
     }
+    const T& Get(std::size_t index) const override { return get(index); }
 
-    void clear() noexcept { top_.reset(); count_ = 0; }
+    void clear() noexcept {
+        if (top_) ++revision_->value;
+        top_.reset();
+        count_ = 0;
+    }
+
+    std::unique_ptr<IEnumerator<T>> GetEnumerator() const override;
 
     template<class Function>
     void each(Walk order, Function function) const {
@@ -382,7 +444,7 @@ public:
     }
 
     bool contains_subtree(const AvlSet& candidate) const {
-        return containsShape(top_, candidate.top_);
+        return candidate.empty() || containsMatchingRoot(top_, candidate.top_);
     }
 
     AvlSet merge(const AvlSet& other) const {
@@ -393,6 +455,12 @@ public:
 
     bool valid() const {
         return count_ == nodeCount(top_) && validate(top_, compare_, {}, {});
+    }
+
+    std::string diagram() const {
+        std::ostringstream output;
+        if (top_) writeDiagram(output, *top_, {}, true, true);
+        return output.str();
     }
 
     std::string to_text(const std::string& notation = "{К}(Л)[П]") const {
@@ -416,17 +484,21 @@ public:
         return result;
     }
 
-    std::size_t live_nodes() const noexcept { return Branch::alive; }
-
-    friend bool operator==(const AvlSet& left, const AvlSet& right) {
-        if (left.count_ != right.count_) return false;
-        for (std::size_t i = 0; i < left.count_; ++i) {
-            if (left.compare_(left.get(i), right.get(i)) || left.compare_(right.get(i), left.get(i))) return false;
-        }
-        return true;
+    std::size_t live_nodes() const noexcept {
+#ifdef AVLSET_TRACK_NODES
+        return Branch::alive;
+#else
+        return 0;
+#endif
     }
+
+    bool equals(const AvlSet& other) const;
+
+    friend bool operator==(const AvlSet& left, const AvlSet& right) { return left.equals(right); }
 
     friend bool operator!=(const AvlSet& left, const AvlSet& right) { return !(left == right); }
     friend AvlSet operator+(const AvlSet& left, const AvlSet& right) { return left.merge(right); }
     friend std::ostream& operator<<(std::ostream& output, const AvlSet& tree) { return output << tree.to_text(); }
 };
+
+#include "tree_enumerator.hpp"
