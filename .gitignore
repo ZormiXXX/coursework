@@ -1,0 +1,6 @@
+**/build/
+**/*.o
+**/*.d
+**/benchmark.csv
+**/benchmark.png
+**/benchmark.svg
