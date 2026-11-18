@@ -4,9 +4,9 @@
 
 #include <memory>
 
-template<class T, class Compare>
+template<class T>
 class TreeEnumerator final : public IEnumerator<T> {
-    using Tree = AvlSet<T, Compare>;
+    using Tree = AvlSet<T>;
     using Branch = typename Tree::Branch;
     using Revision = typename Tree::Revision;
 
@@ -69,14 +69,14 @@ public:
     }
 };
 
-template<class T, class Compare>
-std::unique_ptr<IEnumerator<T>> AvlSet<T, Compare>::GetEnumerator() const {
+template<class T>
+std::unique_ptr<IEnumerator<T>> AvlSet<T>::GetEnumerator() const {
     ensureRevision();
-    return std::make_unique<TreeEnumerator<T, Compare>>(*this);
+    return std::make_unique<TreeEnumerator<T>>(*this);
 }
 
-template<class T, class Compare>
-bool AvlSet<T, Compare>::equals(const AvlSet& other) const {
+template<class T>
+bool AvlSet<T>::equals(const AvlSet& other) const {
     if (count_ != other.count_) return false;
     auto left = GetEnumerator();
     auto right = other.GetEnumerator();
@@ -84,7 +84,7 @@ bool AvlSet<T, Compare>::equals(const AvlSet& other) const {
         if (!right->MoveNext()) return false;
         const auto& a = left->GetCurrent();
         const auto& b = right->GetCurrent();
-        if (compare_(a, b) || compare_(b, a)) return false;
+        if (a < b || b < a) return false;
     }
     return !right->MoveNext();
 }

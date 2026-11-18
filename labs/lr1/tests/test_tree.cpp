@@ -1,4 +1,5 @@
 #include "avl_set.hpp"
+#include "avl_dictionary.hpp"
 #include "value_examples.hpp"
 
 #include <cmath>
@@ -152,19 +153,29 @@ void subtreeAndGenericValues() {
     AvlSet<double> decimals;
     decimals.add(2.25); decimals.add(-1.5);
     verify(decimals.has(2.25) && decimals.get(0) == -1.5, "real values");
-    AvlSet<std::complex<double>, ComplexOrder> complex;
-    complex.add({1.0, 2.0}); complex.add({-1.0, 0.5});
-    verify(complex.size() == 2 && complex.get(0).real() == -1.0, "complex values by explicit order");
-    AvlSet<StudentRecord, StudentOrder> students;
-    students.add({12, "Ada"}); students.add({5, "Lin"});
-    verify(students.has({12, "different name"}) && students.get(0).studentNumber == 5, "student records by identifier");
-    AvlSet<TeacherRecord, TeacherOrder> teachers;
-    teachers.add({901, "math"}); teachers.add({104, "physics"});
-    verify(teachers.has({901, "other department"}) && teachers.get(0).personnelNumber == 104,
-           "teacher records by personnel number");
-    AvlSet<IntegerFunction> functions;
-    functions.add(&addOne); functions.add(&doubleValue);
-    verify(functions.size() == 2 && functions.has(&addOne), "function pointer values");
+    AvlDictionary<int, std::complex<double>> complex;
+    verify(complex.AddOrUpdate(1, {-1.0, 0.5}), "insert complex value by key");
+    complex.AddOrUpdate(2, {1.0, 2.0});
+    verify(complex.Get(1).real() == -1.0 && complex.GetCount() == 2, "complex values need no ordering");
+
+    AvlDictionary<int, StudentRecord> students;
+    students.AddOrUpdate(12, {12, "Ada"}); students.AddOrUpdate(5, {5, "Lin"});
+    verify(students.Get(12).fullName == "Ada" && students.GetCount() == 2,
+           "student records stored by comparable key");
+
+    AvlDictionary<int, TeacherRecord> teachers;
+    teachers.AddOrUpdate(901, {901, "math"}); teachers.AddOrUpdate(104, {104, "physics"});
+    verify(teachers.ContainsKey(104) && teachers.Get(104).subject == "physics",
+           "teacher records stored by comparable key");
+
+    AvlDictionary<int, IntegerFunction> functions;
+    functions.AddOrUpdate(1, &addOne); functions.AddOrUpdate(2, &doubleValue);
+    verify(functions.Get(1)(5) == 6 && functions.Get(2)(5) == 10,
+           "function pointers stored without comparison");
+    verify(!functions.AddOrUpdate(1, &doubleValue) && functions.Get(1)(5) == 10,
+           "dictionary replaces value for existing key");
+    verify(functions.Remove(2) && !functions.ContainsKey(2) && functions.GetCount() == 1,
+           "dictionary removes by key");
 }
 
 void randomizedReference() {

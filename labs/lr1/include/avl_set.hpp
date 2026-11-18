@@ -18,15 +18,15 @@
 #include "ICollection.hpp"
 #include "IEnumerable.hpp"
 
-template<class T, class Compare>
+template<class T>
 class AvlSet;
 
-template<class T, class Compare>
+template<class T>
 class TreeEnumerator;
 
-template<class T, class Compare = std::less<T>>
+template<class T>
 class AvlSet : public ICollection<T>, public IEnumerable<T> {
-    template<class, class>
+    template<class>
     friend class TreeEnumerator;
 
     struct Revision {
@@ -72,7 +72,6 @@ class AvlSet : public ICollection<T>, public IEnumerable<T> {
 
     std::unique_ptr<Branch> top_;
     std::size_t count_ = 0;
-    Compare compare_{};
     mutable std::shared_ptr<Revision> revision_ = std::make_shared<Revision>();
 
     void ensureRevision() const {
@@ -132,8 +131,8 @@ class AvlSet : public ICollection<T>, public IEnumerable<T> {
             return true;
         }
         bool changed;
-        if (compare_(value, branch->value)) changed = addAt(branch->left, value);
-        else if (compare_(branch->value, value)) changed = addAt(branch->right, value);
+        if (value < branch->value) changed = addAt(branch->left, value);
+        else if (branch->value < value) changed = addAt(branch->right, value);
         else return false;
         if (changed) restoreBalance(branch);
         return changed;
@@ -141,16 +140,16 @@ class AvlSet : public ICollection<T>, public IEnumerable<T> {
 
     bool locate(const std::unique_ptr<Branch>& branch, const T& value) const {
         if (!branch) return false;
-        if (compare_(value, branch->value)) return locate(branch->left, value);
-        if (compare_(branch->value, value)) return locate(branch->right, value);
+        if (value < branch->value) return locate(branch->left, value);
+        if (branch->value < value) return locate(branch->right, value);
         return true;
     }
 
     bool removeAt(std::unique_ptr<Branch>& branch, const T& value) {
         if (!branch) return false;
         bool changed;
-        if (compare_(value, branch->value)) changed = removeAt(branch->left, value);
-        else if (compare_(branch->value, value)) changed = removeAt(branch->right, value);
+        if (value < branch->value) changed = removeAt(branch->left, value);
+        else if (branch->value < value) changed = removeAt(branch->right, value);
         else {
             changed = true;
             if (!branch->left) branch = std::move(branch->right);
@@ -195,28 +194,26 @@ class AvlSet : public ICollection<T>, public IEnumerable<T> {
         return indexed(*branch.right, index - leftCount - 1);
     }
 
-    static std::unique_ptr<Branch> branchAt(const std::unique_ptr<Branch>& branch,
-                                            const T& value, const Compare& compare) {
+    static std::unique_ptr<Branch> branchAt(const std::unique_ptr<Branch>& branch, const T& value) {
         if (!branch) return {};
-        if (compare(value, branch->value)) return branchAt(branch->left, value, compare);
-        if (compare(branch->value, value)) return branchAt(branch->right, value, compare);
+        if (value < branch->value) return branchAt(branch->left, value);
+        if (branch->value < value) return branchAt(branch->right, value);
         return duplicate(branch);
     }
 
-    static bool sameBranch(const std::unique_ptr<Branch>& left, const std::unique_ptr<Branch>& right,
-                           const Compare& compare) {
+    static bool sameBranch(const std::unique_ptr<Branch>& left, const std::unique_ptr<Branch>& right) {
         if (!left || !right) return !left && !right;
-        const bool sameValue = !compare(left->value, right->value) && !compare(right->value, left->value);
-        return sameValue && sameBranch(left->left, right->left, compare)
-            && sameBranch(left->right, right->right, compare);
+        const bool sameValue = !(left->value < right->value) && !(right->value < left->value);
+        return sameValue && sameBranch(left->left, right->left)
+            && sameBranch(left->right, right->right);
     }
 
     bool containsMatchingRoot(const std::unique_ptr<Branch>& here,
                               const std::unique_ptr<Branch>& pattern) const {
         if (!here) return false;
-        if (compare_(pattern->value, here->value)) return containsMatchingRoot(here->left, pattern);
-        if (compare_(here->value, pattern->value)) return containsMatchingRoot(here->right, pattern);
-        return sameBranch(here, pattern, compare_);
+        if (pattern->value < here->value) return containsMatchingRoot(here->left, pattern);
+        if (here->value < pattern->value) return containsMatchingRoot(here->right, pattern);
+        return sameBranch(here, pattern);
     }
 
     static void writeValue(std::ostream& output, const T& value) {
@@ -245,7 +242,7 @@ class AvlSet : public ICollection<T>, public IEnumerable<T> {
         return value;
     }
 
-    static std::unique_ptr<Branch> readBranch(std::istream& input, const Format& format, const Compare& compare) {
+    static std::unique_ptr<Branch> readBranch(std::istream& input, const Format& format) {
         std::optional<T> value;
         std::unique_ptr<Branch> left;
         std::unique_ptr<Branch> right;
@@ -255,7 +252,7 @@ class AvlSet : public ICollection<T>, public IEnumerable<T> {
                 if (peek(input) != section.close) value = readValue(input);
             } else {
                 std::unique_ptr<Branch> child;
-                if (peek(input) != section.close) child = readBranch(input, format, compare);
+                if (peek(input) != section.close) child = readBranch(input, format);
                 if (section.mark == 'L') left = std::move(child);
                 else right = std::move(child);
             }
@@ -266,9 +263,9 @@ class AvlSet : public ICollection<T>, public IEnumerable<T> {
         branch->left = std::move(left);
         branch->right = std::move(right);
         refresh(*branch);
-        if (branch->left && !compare(maximum(*branch->left), branch->value))
+        if (branch->left && !(maximum(*branch->left) < branch->value))
             throw InvalidArgument("left branch violates search ordering");
-        if (branch->right && !compare(branch->value, minimum(*branch->right)))
+        if (branch->right && !(branch->value < minimum(*branch->right)))
             throw InvalidArgument("right branch violates search ordering");
         if (std::abs(level(branch->left) - level(branch->right)) > 1)
             throw InvalidArgument("tree text describes an unbalanced tree");
@@ -296,17 +293,17 @@ class AvlSet : public ICollection<T>, public IEnumerable<T> {
         return branch.right ? maximum(*branch.right) : branch.value;
     }
 
-    static bool validate(const std::unique_ptr<Branch>& branch, const Compare& compare,
+    static bool validate(const std::unique_ptr<Branch>& branch,
                          const std::optional<T>& lower, const std::optional<T>& upper) {
         if (!branch) return true;
-        if (lower && !compare(*lower, branch->value)) return false;
-        if (upper && !compare(branch->value, *upper)) return false;
+        if (lower && !(*lower < branch->value)) return false;
+        if (upper && !(branch->value < *upper)) return false;
         const int lh = level(branch->left), rh = level(branch->right);
         return branch->level == 1 + std::max(lh, rh)
             && branch->count == 1 + nodeCount(branch->left) + nodeCount(branch->right)
             && std::abs(lh - rh) <= 1
-            && validate(branch->left, compare, lower, branch->value)
-            && validate(branch->right, compare, branch->value, upper);
+            && validate(branch->left, lower, branch->value)
+            && validate(branch->right, branch->value, upper);
     }
 
     static void writeDiagram(std::ostream& output, const Branch& branch,
@@ -351,11 +348,10 @@ public:
     enum class Walk { KLP, KPL, LKP, LPK, PKL, PLK };
 
     AvlSet() = default;
-    explicit AvlSet(Compare compare) : compare_(std::move(compare)) {}
-    AvlSet(const AvlSet& other) : top_(duplicate(other.top_)), count_(other.count_), compare_(other.compare_) {}
-    AvlSet(AvlSet&& other) noexcept(std::is_nothrow_move_constructible_v<Compare>)
+    AvlSet(const AvlSet& other) : top_(duplicate(other.top_)), count_(other.count_) {}
+    AvlSet(AvlSet&& other) noexcept
         : top_(std::move(other.top_)), count_(std::exchange(other.count_, 0)),
-          compare_(std::move(other.compare_)), revision_(std::move(other.revision_)) {
+          revision_(std::move(other.revision_)) {
         if (revision_) ++revision_->value;
     }
 
@@ -366,12 +362,11 @@ public:
         return *this;
     }
 
-    void swap(AvlSet& other) noexcept(noexcept(std::swap(compare_, other.compare_))) {
+    void swap(AvlSet& other) noexcept {
         if (revision_) ++revision_->value;
         if (other.revision_) ++other.revision_->value;
         top_.swap(other.top_);
         std::swap(count_, other.count_);
-        std::swap(compare_, other.compare_);
         revision_.swap(other.revision_);
     }
 
@@ -391,6 +386,15 @@ public:
     }
 
     bool has(const T& value) const { return locate(top_, value); }
+    const T* find(const T& value) const {
+        const Branch* branch = top_.get();
+        while (branch) {
+            if (value < branch->value) branch = branch->left.get();
+            else if (branch->value < value) branch = branch->right.get();
+            else return &branch->value;
+        }
+        return nullptr;
+    }
     bool Contains(const T& value) const override { return has(value); }
     bool empty() const noexcept { return !top_; }
     std::size_t size() const noexcept { return count_; }
@@ -425,7 +429,7 @@ public:
 
     template<class Predicate>
     AvlSet where(Predicate predicate) const {
-        AvlSet output(compare_);
+        AvlSet output;
         each(Walk::LKP, [&](const T& value) { if (std::invoke(predicate, value)) output.add(value); });
         return output;
     }
@@ -437,8 +441,8 @@ public:
     }
 
     AvlSet subtree(const T& rootValue) const {
-        AvlSet output(compare_);
-        output.top_ = branchAt(top_, rootValue, compare_);
+        AvlSet output;
+        output.top_ = branchAt(top_, rootValue);
         output.count_ = nodeCount(output.top_);
         return output;
     }
@@ -454,7 +458,7 @@ public:
     }
 
     bool valid() const {
-        return count_ == nodeCount(top_) && validate(top_, compare_, {}, {});
+        return count_ == nodeCount(top_) && validate(top_, {}, {});
     }
 
     std::string diagram() const {
@@ -470,14 +474,13 @@ public:
         return output.str();
     }
 
-    static AvlSet from_text(const std::string& text, const std::string& notation = "{К}(Л)[П]",
-                            Compare compare = Compare{}) {
+    static AvlSet from_text(const std::string& text, const std::string& notation = "{К}(Л)[П]") {
         const auto format = parseFormat(notation);
         std::istringstream input(text);
-        AvlSet result(std::move(compare));
+        AvlSet result;
         input >> std::ws;
         if (input.peek() != std::char_traits<char>::eof())
-            result.top_ = readBranch(input, format, result.compare_);
+            result.top_ = readBranch(input, format);
         input >> std::ws;
         if (input.peek() != std::char_traits<char>::eof()) throw InvalidArgument("trailing data after tree");
         result.count_ = nodeCount(result.top_);
